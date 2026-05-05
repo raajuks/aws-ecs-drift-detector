@@ -1,6 +1,4 @@
-# infra/environments/dev/terraform.tfvars
-
 project_name    = "ecs-drift-detector"
 environment     = "dev"
-alert_email     = "rajukanip@gmail.com"
-container_image = "placeholder/image:latest"
+alert_email     = "raajuks@gmail.com"
+container_image = "502140064534.dkr.ecr.us-east-1.amazonaws.com/ecs-drift-detector:latest"
