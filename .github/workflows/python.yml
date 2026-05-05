@@ -1,0 +1,100 @@
+# .github/workflows/python.yml
+name: Python CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'service/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'service/**'
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: ecs-drift-detector
+
+jobs:
+  test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        working-directory: service
+        run: pip install -r requirements.txt
+
+      - name: Lint with flake8
+        working-directory: service
+        run: |
+          pip install flake8
+          flake8 app/ main.py --max-line-length=120 --ignore=E501
+
+      - name: Run tests
+        working-directory: service
+        run: |
+          pip install pytest pytest-mock
+          pytest tests/ -v --tb=short
+
+  build-and-push:
+    name: Build & Push to ECR
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag and push image to ECR
+        working-directory: service
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Deploy to ECS
+        run: |
+          aws ecs update-service \
+            --cluster ecs-drift-detector-cluster \
+            --service ecs-drift-detector-detector \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+          echo "Deployment triggered - new task will pull latest image"
+
+      - name: Smoke Test - Health Check
+        run: |
+          echo "Waiting 30s for ECS to stabilize..."
+          sleep 30
+          aws ecs describe-services \
+            --cluster ecs-drift-detector-cluster \
+            --services ecs-drift-detector-detector \
+            --region ${{ env.AWS_REGION }} \
+            --query 'services[0].{Desired:desiredCount,Running:runningCount,Pending:pendingCount,Status:status}' \
+            --output table
