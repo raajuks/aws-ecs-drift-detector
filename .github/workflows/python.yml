@@ -41,10 +41,9 @@ jobs:
           flake8 app/ main.py --max-line-length=120 --ignore=E501
 
       - name: Run tests
-        working-directory: service
         run: |
           pip install pytest pytest-mock
-          pytest tests/ -v --tb=short
+          pytest service/tests/ -v --tb=short
 
   build-and-push:
     name: Build & Push to ECR
